@@ -9,225 +9,13 @@ $Notice: (C) Copyright 2018 by Fuzes Marcell, All Rights Reserved. $
 */
 
 #include "brainfuck_jit.h"
+#include "brainfuck_asm.cpp"
 
 #include <windows.h>
 #include <stdio.h>
 
-static void
-WriteByte(jit_code_buffer *Buffer, unsigned char Number)
-{
-    *(Buffer->Memory + Buffer->Index) = Number;
-    Buffer->Index += sizeof(unsigned char);
-}
-
-static void
-WriteInt(jit_code_buffer *Buffer, unsigned int Number)
-{
-    *((unsigned int *)(Buffer->Memory + Buffer->Index)) = Number;
-    Buffer->Index += sizeof(unsigned int);
-}
-
-static void
-WriteShort(jit_code_buffer *Buffer, unsigned short Number)
-{
-    *((unsigned short *)(Buffer->Memory + Buffer->Index)) = Number;
-    Buffer->Index += sizeof(unsigned short);
-}
-
-static unsigned char
-AddRegisterToOpcode(unsigned char OpCode, register_type Reg)
-{
-    unsigned char Result;
-    Result = (OpCode & 0xF8) | ((unsigned char)Reg);
-    return Result;
-}
-
-static void
-AsmMovR32Imm32(jit_code_buffer *Buffer, register_type Register, unsigned int Number)
-{
-    unsigned char OpCode = AddRegisterToOpcode(0xB8, Register);
-    WriteByte(Buffer, OpCode);
-    WriteInt(Buffer, Number);
-}
-
-static void
-AsmMovR32R32RM(jit_code_buffer *Buffer, 
-               register_type DestinationRegister, register_mod_type SourceRegister)
-{
-    unsigned char OpCode = 0x8B;
-    unsigned char ModRM = (unsigned char)SourceRegister | (DestinationRegister << 3);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmMovZx(jit_code_buffer *Buffer, register_type DestRegister, register_type SourceRegister)
-{
-    unsigned short OpCode = SWAP_SHORT(0x0FB6);
-    unsigned char ModRM = SourceRegister | (DestRegister << 3);
-    WriteShort(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmMovR8R8MR(jit_code_buffer *Buffer, register_type DestRegister, register_type SourceRegister)
-{
-    unsigned char OpCode = 0x88;
-    unsigned char ModRM =  DestRegister | (SourceRegister << 3);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-AsmMovR64R64(jit_code_buffer *Buffer, register_type DestRegister, register_type SourceRegister)
-{
-    unsigned char Prefix = 0x48;
-    unsigned char OpCode = 0x8B;
-    unsigned char ModRM = EncodeModRM(0x3, DestRegister, SourceRegister);
-    WriteByte(Buffer, Prefix);
-    WriteByte(Buffer, OpCode);
-    WriteByte(ModRM);
-}
-
-static void
-AsmRet(jit_code_buffer *Buffer)
-{
-    WriteByte(Buffer, 0xC3);
-}
-
-static void
-AsmIncR32(jit_code_buffer *Buffer, register_mod_type Register)
-{
-    unsigned char OpCode = 0xFF;
-    unsigned char ModRM = (unsigned char)Register;
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmIncR64(jit_code_buffer *Buffer, register_mod_type Register)
-{
-    // TODO(fuzes): Why is this the prefix I do not get it.
-    unsigned char Prefix = 0x48;
-    unsigned char OpCode = 0xFF;
-    unsigned char ModRM = (unsigned char)Register;
-    WriteByte(Buffer, Prefix);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmDecR32(jit_code_buffer *Buffer, register_mod_type Register)
-{
-    unsigned char OpCode = 0xFF;
-    unsigned char ModRM = (unsigned char)Register | (1 << 3);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmDecR64(jit_code_buffer *Buffer, register_mod_type Register)
-{
-    unsigned char Prefix = 0x48;
-    unsigned char OpCode = 0xFF;
-    unsigned char ModRM = (unsigned char)Register | (1 << 3);
-    WriteByte(Buffer, Prefix);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmJmp32(jit_code_buffer *Buffer, int Offset)
-{
-    unsigned char OpCode = 0xE9;
-    WriteByte(Buffer, OpCode);
-    
-    // NOTE(fuzes): The offset is calculated based on the instruction pointer
-    // which is residing after this instruction so we have to add the size of the instruction
-    // to the offset which we get passed.
-    if(Offset <= 0)
-    {
-        Offset -= 5;
-    }
-    else
-    {
-        Offset += 5;
-    }
-    
-    // NOTE(fuzes): For some reason I do not understand why there is no need to swap the Offset
-    // We had to swap the opcode...
-    WriteInt(Buffer, Offset);
-}
-
-static void
-AsmJeRel32(jit_code_buffer *Buffer, int Offset)
-{
-    unsigned int SizeOfInstruction = sizeof(int) + sizeof(short);
-    unsigned short OpCode = SWAP_SHORT(0x0F84);
-    if(Offset <= 0)
-    {
-        Offset -= SizeOfInstruction;
-    }
-    else
-    {
-        Offset += SizeOfInstruction;
-    }
-    
-    WriteShort(Buffer, OpCode);
-    WriteInt(Buffer, Offset);
-}
-
-static void
-AsmTestR8R8(jit_code_buffer *Buffer, register_type R1, register_type R2)
-{
-    unsigned char OpCode = 0x84;
-    unsigned char ModRM = EncodeModRM(0x3, R1, R2);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmCall(jit_code_buffer *Buffer, register_type Register)
-{
-    unsigned char OpCode = 0xFF;
-    unsigned char ModRM = EncodeModRM(0x3, 0x2, Register);
-    WriteByte(Buffer, OpCode);
-    WriteByte(Buffer, ModRM);
-}
-
-static void
-AsmPush(jit_code_buffer *Buffer, register_type Register)
-{
-    unsigned char OpCode = 0x55;
-    WriteByte(Buffer, OpCode);
-}
-
-static void
-AsmPushRbp(jit_code_buffer *Buffer)
-{
-    WriteByte(Buffer, 0x55);
-}
-
-static void
-AsmMovRbpRsp(jit_code_buffer *Buffer)
-{
-    WriteByte(Buffer, 0x48);
-    WriteByte(Buffer, 0x8B);
-    WriteByte(Buffer, 0xEC);
-}
-
-static void
-AsmMovRspRbp(jit_code_buffer *Buffer)
-{
-    WriteByte(Buffer, 0x48);
-    WriteByte(Buffer, 0x8B);
-    WriteByte(Buffer, 0xE5);
-}
-
-static void
-AsmPopRbp(jit_code_buffer *Buffer)
-{
-    WriteByte(Buffer, 0x5D);
-}
+#include "brainfuck_parser.h"
+#include "brainfuck_parser.cpp"
 
 PUT_CHARINT(PutCharInt)
 {
@@ -250,6 +38,8 @@ ReadEntireFileAndZeroTerminate(char *FileName)
     Result.Size = ftell(File) + 1;
     Result.Contents = (char *)malloc(Result.Size);
     
+    fseek(File, 0, SEEK_SET);
+    
     fread(Result.Contents, Result.Size, 1, File);
     fclose(File);
     
@@ -261,9 +51,8 @@ ReadEntireFileAndZeroTerminate(char *FileName)
 int main(int ArgCount, char **Args)
 {
     
-#if 1    
     jit_code_buffer JitBuffer;
-    JitBuffer.Size = 2048;
+    JitBuffer.Size = 16384;
     JitBuffer.Memory = (unsigned char *)VirtualAlloc(0, JitBuffer.Size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
     JitBuffer.Index = 0;
     
@@ -303,18 +92,39 @@ int main(int ArgCount, char **Args)
     AsmJeRel32(&JitBuffer, (-JitBuffer.Index));
 #endif
     
+#if 0    
+    AsmMov(&JitBuffer, Register_ID_R12, Register_ID_R8);
+    AsmMov(&JitBuffer, Register_ID_Rax, Register_ID_Rbx);
+    AsmMov(&JitBuffer, Register_ID_R12D, Register_ID_R8D);
+    AsmMov(&JitBuffer, Register_ID_Eax, Register_ID_R12D);
+    AsmMov(&JitBuffer, Register_ID_Ax, Register_ID_R12W);
+    AsmMov(&JitBuffer, Register_ID_Al, Register_ID_R12B);
+#endif
+    
+#if 0    
+    // NOTE(fuzes): We store in RDX: The putchar function pointer
+    // We store in r12 the buffer of the brainfuck programm.
+    AsmMov(&JitBuffer, Register_ID_Rbx, Register_ID_Rdx);
+    AsmMov(&JitBuffer, Register_ID_R12, Register_ID_Rcx);
+    
+    AsmMov(&JitBuffer, Register_ID_Rcx, Register_ID_R12, false, true);
+    WriteByte(&JitBuffer, 0x24);
+    
+    AsmAddR32Imm32(&JitBuffer, Register_ID_Ecx, 'R');
+    AsmSubR32Imm32(&JitBuffer, Register_ID_Ecx, 1);
+    
     AsmPushRbp(&JitBuffer);
     AsmMovRbpRsp(&JitBuffer);
     
-    AsmMovR32Imm32(&JitBuffer, Register_Ecx, 0x41);
-    AsmCall(&JitBuffer, Register_Edx);
+    AsmCall(&JitBuffer, Register_Ebx);
     
     AsmMovRspRbp(&JitBuffer);
     AsmPopRbp(&JitBuffer);
     
     AsmRet(&JitBuffer);
+#endif
     
-    if(ArgCount == 3)
+    if(ArgCount >= 2)
     {
         if(strcmp(Args[1], "-dump") == 0)
         {
@@ -322,6 +132,55 @@ int main(int ArgCount, char **Args)
             fwrite(JitBuffer.Memory, JitBuffer.Index, 1, File);
             fclose(File);
             printf("Dumped contents to %s (%d bytes)", Args[2], JitBuffer.Index);
+        }
+        else if(strcmp(Args[1], "-print") == 0)
+        {
+            for(int Index = 0;
+                Index < JitBuffer.Index;
+                ++Index)
+            {
+                printf("%02X ", JitBuffer.Memory[Index]);
+                if((((Index + 1) % 8) == 0) && (Index != 0))
+                {
+                    printf("\n");
+                }
+            }
+        }
+        else
+        {
+            file SourceFile = ReadEntireFileAndZeroTerminate(Args[1]);
+            
+            AsmMov(&JitBuffer, Register_ID_Rbx, Register_ID_Rdx);
+            AsmMov(&JitBuffer, Register_ID_R12, Register_ID_Rcx);
+            
+            brainfuck_parser Parser;
+            Parser.At = SourceFile.Contents;
+            
+            while(ParseExpressions(&Parser, &JitBuffer))
+            {
+                
+            }
+            
+            AsmPushRbp(&JitBuffer);
+            AsmMovRbpRsp(&JitBuffer);
+            
+            AsmCall(&JitBuffer, Register_Ebx);
+            
+            AsmMovRspRbp(&JitBuffer);
+            AsmPopRbp(&JitBuffer);
+            
+            AsmRet(&JitBuffer);
+            
+            DWORD Old;
+            VirtualProtect(JitBuffer.Memory, JitBuffer.Size, PAGE_EXECUTE_READ, &Old);
+            jit_function *JitFunction = (jit_function *)JitBuffer.Memory;
+            
+            int BrainFuckBuffer[30000] = {};
+            int Result = JitFunction(BrainFuckBuffer, PutCharInt);
+            printf("%d\n", BrainFuckBuffer[0]);
+            printf("%d\n", BrainFuckBuffer[1]);
+            printf("%d\n", BrainFuckBuffer[2]);
+            printf("%d\n", BrainFuckBuffer[3]);
         }
     }
     else
@@ -332,16 +191,8 @@ int main(int ArgCount, char **Args)
         
         unsigned char BrainFuckBuffer[30000] = {};
         int Result = JitFunction(BrainFuckBuffer, PutCharInt);
-        printf("%i", BrainFuckBuffer[0]);
+        printf("%x", BrainFuckBuffer[0]);
     }
-#endif
-    
-#if 0    
-    if(ArgCount >= 2)
-    {
-        file SourceFile = ReadEntireFileAndZeroTerminate(Args[1]);
-    }
-#endif
     
     return 0;
 }

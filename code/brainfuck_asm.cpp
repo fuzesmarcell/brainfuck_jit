@@ -168,10 +168,6 @@ AsmJeRel32(jit_code_buffer *Buffer, int Offset)
     {
         Offset -= SizeOfInstruction;
     }
-    else
-    {
-        Offset += SizeOfInstruction;
-    }
     
     WriteShort(Buffer, OpCode);
     WriteInt(Buffer, Offset);
@@ -465,5 +461,13 @@ AsmSubR32Imm32(jit_code_buffer *Buffer, register_id RegisterID, unsigned int Val
     
     WriteByte(Buffer, OpCode);
     WriteByte(Buffer, ModRM);
+    WriteInt(Buffer, Value);
+}
+
+static void
+AsmJump(jit_code_buffer *Buffer, unsigned int Value)
+{
+    unsigned char OpCode = 0xE9;
+    WriteByte(Buffer, OpCode);
     WriteInt(Buffer, Value);
 }

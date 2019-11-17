@@ -12,6 +12,12 @@ $Notice: (C) Copyright 2018 by Fuzes Marcell, All Rights Reserved. $
 #define SWAP_SHORT(Value) ((Value << 8) | ((Value & 0xFF00) >> 8))
 #define SWAP_INT(Value) (((Value & 0xFF000000) >> 24) | ((Value & 0x00FF0000) >> 8) | ((Value & 0x0000FF00) << 8) | (Value << 24))
 
+#define Bytes(V) V
+#define Kilobytes(V) (Bytes(V) * 1024LL)
+#define Megabytes(V) (Kilobytes(V) * 1024LL)
+#define Gigabytes(V) (Megabytes(V) * 1024LL)
+#define Terabytes(V) (Gigabytes(V) * 1024LL)
+
 #define Assert(Expression) if(!(Expression)){int *AFFFFFF = 0; *AFFFFFF = 69;}
 
 //

@@ -17,6 +17,7 @@ NOTE: The `build.bat` script on Windows expects to find `cl` (MSVC). Your enviro
 ### Step 3: Run
 1. To run a brainf program simply execute the command in the build directory `brainf_jit brainfsource.b`
 2. You can specify different parameters with addtional command line arguments. Simply run `brainf_jit` and the usage will be printed
+
 NOTE: The -cellsize option currently is not working and can be only 64-bit.
 ## Examples
 In the `examples` directory you will find some brainf programms you can try out.

@@ -13,6 +13,25 @@ $Notice: (C) Copyright 2018 by Fuzes Marcell, All Rights Reserved. $
 #include <windows.h>
 #include <stdio.h>
 
+internal LARGE_INTEGER
+Win32GetWallClock()
+{
+    LARGE_INTEGER Result;
+    QueryPerformanceCounter(&Result);
+    
+    return Result;
+}
+
+static s64 GlobalPerfCountFrequency;
+internal f32
+Win32GetSecondsElapsed(LARGE_INTEGER Start, LARGE_INTEGER End)
+{
+    f32 Result;
+    s64 CounterElapsed = End.QuadPart - Start.QuadPart;
+    Result = ((f32)CounterElapsed) / ((f32)GlobalPerfCountFrequency);
+    return Result;
+}
+
 internal loaded_file
 ReadEntireFileAndZeroTerminate(char *FileName)
 {
@@ -381,6 +400,94 @@ StringEndsWith(u8 *Text, u8 *Suffix)
     return Result;
 }
 
+internal b32
+ParseArguments(cmd_arguments *Arguments, int ArgCount, char **Args)
+{
+    b32 Success = TRUE;
+    for(u32 ArgumentIndex = 2;
+        ArgumentIndex < ArgCount;
+        ++ArgumentIndex)
+    {
+        if(strcmp("-debug", Args[ArgumentIndex]) == 0)
+        {
+            Arguments->Debug = TRUE;
+        }
+        else if(strcmp("-cellsize", Args[ArgumentIndex]) == 0)
+        {
+            if((ArgumentIndex + 1) < ArgCount)
+            {
+                u32 CellSize = ConvertStringToU32(Args[ArgumentIndex + 1],
+                                                  strlen(Args[ArgumentIndex + 1]));
+                if(CellSize != 8  ||
+                   CellSize != 16 ||
+                   CellSize != 32 ||
+                   CellSize != 64)
+                {
+                    printf("Invalid cell size %d.\n", CellSize);
+                    Success = FALSE;
+                }
+            }
+            else
+            {
+                printf("No argument for cellsize parameter\n");
+                Success = FALSE;
+            }
+        }
+        else if(strcmp("-buffercount", Args[ArgumentIndex]) == 0)
+        {
+            if((ArgumentIndex + 1) < ArgCount)
+            {
+                Arguments->BufferSize = ConvertStringToU32(Args[ArgumentIndex + 1],
+                                                           strlen(Args[ArgumentIndex + 1]));
+            }
+            else
+            {
+                printf("No argument for buffercount parameter\n");
+                Success = FALSE;
+            }
+        }
+        else if(strcmp("-codebuffersize", Args[ArgumentIndex]) == 0)
+        {
+            if((ArgumentIndex + 1) < ArgCount)
+            {
+                // NOTE(fuzes): First start parsing from behind to check
+                // which size the user defined.
+                
+                u8 *Text = Args[ArgumentIndex + 1];
+                memory_index TextLength = strlen(Text);
+                if(StringEndsWith(Text, "b"))
+                {
+                    Arguments->CodeBufferSize = ConvertStringToU32(Text, TextLength - 1);
+                }
+                else if(StringEndsWith(Text, "kb"))
+                {
+                    Arguments->CodeBufferSize = ConvertStringToU32(Text, TextLength - 2) * 1024;
+                }
+                else if(StringEndsWith(Text, "mb"))
+                {
+                    Arguments->CodeBufferSize = ConvertStringToU32(Text, TextLength - 2) * 1024 * 1024;
+                }
+                else
+                {
+                    printf("Invalid suffix for codebuffersize paramater\n");
+                    Success = FALSE;
+                }
+            }
+            else
+            {
+                printf("No argument for codebuffersize parameter\n");
+                Success = FALSE;
+            }
+        }
+        else if(strcmp("-perf", Args[ArgumentIndex]) == 0)
+        {
+            Arguments->Perf = TRUE;
+        }
+    }
+    
+    return Success;
+}
+
 int main(int ArgCount, char **Args)
 {
     if(ArgCount >= 2)
@@ -392,133 +499,79 @@ int main(int ArgCount, char **Args)
         Arguments.BufferSize = Kilobytes(30);
         Arguments.CodeBufferSize = Kilobytes(128);
         
-        for(u32 ArgumentIndex = 2;
-            ArgumentIndex < ArgCount;
-            ++ArgumentIndex)
+        if(ParseArguments(&Arguments, ArgCount, Args))
         {
-            if(strcmp("-debug", Args[ArgumentIndex]) == 0)
-            {
-                Arguments.Debug = TRUE;
-            }
-            else if(strcmp("-cellsize", Args[ArgumentIndex]) == 0)
-            {
-                if((ArgumentIndex + 1) < ArgCount)
-                {
-                    u32 CellSize = ConvertStringToU32(Args[ArgumentIndex + 1],
-                                                      strlen(Args[ArgumentIndex + 1]));
-                    if(CellSize != 8  ||
-                       CellSize != 16 ||
-                       CellSize != 32 ||
-                       CellSize != 64)
-                    {
-                        printf("Invalid cell size %d.\n", CellSize);
-                    }
-                }
-                else
-                {
-                    printf("No argument for cellsize parameter\n");
-                }
-            }
-            else if(strcmp("-buffercount", Args[ArgumentIndex]) == 0)
-            {
-                if((ArgumentIndex + 1) < ArgCount)
-                {
-                    Arguments.BufferSize = ConvertStringToU32(Args[ArgumentIndex + 1],
-                                                              strlen(Args[ArgumentIndex + 1]));
-                }
-                else
-                {
-                    printf("No argument for buffercount parameter\n");
-                }
-            }
-            else if(strcmp("-codebuffersize", Args[ArgumentIndex]) == 0)
-            {
-                if((ArgumentIndex + 1) < ArgCount)
-                {
-                    // NOTE(fuzes): First start parsing from behind to check
-                    // which size the user defined.
-                    
-                    u8 *Text = Args[ArgumentIndex + 1];
-                    memory_index TextLength = strlen(Text);
-                    if(StringEndsWith(Text, "b"))
-                    {
-                        Arguments.CodeBufferSize = ConvertStringToU32(Text, TextLength - 1);
-                    }
-                    else if(StringEndsWith(Text, "kb"))
-                    {
-                        Arguments.CodeBufferSize = ConvertStringToU32(Text, TextLength - 2) * 1024;
-                    }
-                    else if(StringEndsWith(Text, "mb"))
-                    {
-                        Arguments.CodeBufferSize = ConvertStringToU32(Text, TextLength - 2) * 1024 * 1024;
-                    }
-                    else
-                    {
-                        printf("Invalid suffix for codebuffersize paramater\n");
-                    }
-                }
-                else
-                {
-                    printf("No argument for codebuffersize parameter\n");
-                }
-            }
-            else if(strcmp("-perf", Args[ArgumentIndex]) == 0)
-            {
-                Arguments.Perf = TRUE;
-            }
-        }
-        
-        jit_code_buffer JitBuffer = InitializeJitBuffer(Arguments.CodeBufferSize);
-        
-        // NOTE(fuzes): We move the putchar function into our non volatile register.
-        // mov rbx, rdx
-        u8 BufferMovRbxRdx[] = {0x48, 0x8B, 0xDA};
-        WriteByteStream(&JitBuffer, BufferMovRbxRdx);
-        ++JitBuffer.NumberOfInstructions;
-        
-        // NOTE(fuzes): The brainf main buffer is passed as the first argument so in windows it is in
-        // rcx so we move this into a non volatile register.
-        // mov rbx, rdx
-        u8 BufferMovR12Rcx[] = {0x4C, 0x8B, 0xE1};
-        WriteByteStream(&JitBuffer, BufferMovR12Rcx);
-        ++JitBuffer.NumberOfInstructions;
-        
-        // NOTE(fuzes): The third argument is the getchar function so we save it in r13
-        u8 BufferMovR13R8[] = {0x4D, 0x8B, 0xE8};
-        WriteByteStream(&JitBuffer, BufferMovR13R8);
-        ++JitBuffer.NumberOfInstructions;
-        
-        loaded_file BrainFSourceFile = ReadEntireFileAndZeroTerminate(Args[1]);
-        
-        brainf_parser Parser;
-        Parser.At = BrainFSourceFile.Contents;
-        
-        while(ParseAndEmitInstructions(&Parser, &JitBuffer)) {}
-        
-        // ret
-        WriteU8(&JitBuffer, 0xC3);
-        ++JitBuffer.NumberOfInstructions;
-        
-        FinalizeJitBufferForExecution(&JitBuffer);
-        
-        void *BrainfBuffer = calloc(1, Arguments.CellSize * Arguments.BufferSize);
-        
-        if(!JitBuffer.Overflow)
-        {
-            jit_function *JitFunction = (jit_function *)JitBuffer.Memory;
-            s32 Result = JitFunction(BrainfBuffer, PutCharWrapper, GetCharWrapper);
+            jit_code_buffer JitBuffer = InitializeJitBuffer(Arguments.CodeBufferSize);
             
-            if(Arguments.Debug)
+            // NOTE(fuzes): We move the putchar function into our non volatile register.
+            // mov rbx, rdx
+            u8 BufferMovRbxRdx[] = {0x48, 0x8B, 0xDA};
+            WriteByteStream(&JitBuffer, BufferMovRbxRdx);
+            ++JitBuffer.NumberOfInstructions;
+            
+            // NOTE(fuzes): The brainf main buffer is passed as the first argument so in windows it is in
+            // rcx so we move this into a non volatile register.
+            // mov rbx, rdx
+            u8 BufferMovR12Rcx[] = {0x4C, 0x8B, 0xE1};
+            WriteByteStream(&JitBuffer, BufferMovR12Rcx);
+            ++JitBuffer.NumberOfInstructions;
+            
+            // NOTE(fuzes): The third argument is the getchar function so we save it in r13
+            u8 BufferMovR13R8[] = {0x4D, 0x8B, 0xE8};
+            WriteByteStream(&JitBuffer, BufferMovR13R8);
+            ++JitBuffer.NumberOfInstructions;
+            
+            loaded_file BrainFSourceFile = ReadEntireFileAndZeroTerminate(Args[1]);
+            
+            brainf_parser Parser;
+            Parser.At = BrainFSourceFile.Contents;
+            
+            while(ParseAndEmitInstructions(&Parser, &JitBuffer)) {}
+            
+            // ret
+            WriteU8(&JitBuffer, 0xC3);
+            ++JitBuffer.NumberOfInstructions;
+            
+            FinalizeJitBufferForExecution(&JitBuffer);
+            
+            void *BrainfBuffer = calloc(1, Arguments.CellSize * Arguments.BufferSize);
+            
+            if(!JitBuffer.Overflow)
             {
-                printf("Instructions: %d\n", JitBuffer.NumberOfInstructions);
-                printf("Size: %lld bytes", JitBuffer.Index);
+                if(Arguments.Perf)
+                {
+                    // NOTE(fuzes): This is required on startup for the windows
+                    // query performance counter.
+                    LARGE_INTEGER PerfCountFrequencyResult;
+                    QueryPerformanceFrequency(&PerfCountFrequencyResult);
+                    GlobalPerfCountFrequency = PerfCountFrequencyResult.QuadPart;
+                    
+                    LARGE_INTEGER StartCounter = Win32GetWallClock();
+                    
+                    jit_function *JitFunction = (jit_function *)JitBuffer.Memory;
+                    s32 Result = JitFunction(BrainfBuffer, PutCharWrapper, GetCharWrapper);
+                    
+                    LARGE_INTEGER EndCounter = Win32GetWallClock();
+                    f32 SecondsElapsed = Win32GetSecondsElapsed(StartCounter, EndCounter);
+                    printf("Done in %.03fsec\n", SecondsElapsed);
+                }
+                else
+                {
+                    jit_function *JitFunction = (jit_function *)JitBuffer.Memory;
+                    s32 Result = JitFunction(BrainfBuffer, PutCharWrapper, GetCharWrapper);
+                }
+                
+                if(Arguments.Debug)
+                {
+                    printf("Instructions: %d\n", JitBuffer.NumberOfInstructions);
+                    printf("Size: %lld bytes", JitBuffer.Index);
+                }
+            }
+            else
+            {
+                printf("Fatal error: Overflow in instruction buffer.\nConsider increasing the codebuffer.\nRequired size: %lldbytes", JitBuffer.Index);
             }
         }
-        else
-        {
-            printf("Fatal error: Overflow in instruction buffer.\nConsider increasing the codebuffer.\nRequired size: %lldbytes", JitBuffer.Index);
-        }
-        
     }
     else
     {
